@@ -223,6 +223,10 @@ export class Customer {
     ctx.strokeStyle = angry ? '#ff6b6b' : '#3b3f52';
     ctx.stroke();
 
+    if (this.vip && !angry && !this.served) {
+      ctx.font = '40px sans-serif';
+      ctx.fillText('👑', w - 56, 42);
+    }
     ctx.font = '68px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
