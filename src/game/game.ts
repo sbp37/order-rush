@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DISHES, GAME, STATIONS, type Dish, type DishKey, type StationDef } from './config';
+import { DISHES, GAME, STATIONS, UPGRADES, type Dish, type DishKey, type StationDef, type UpgradeKey } from './config';
 import { preload, instance } from './loader';
 import { buildWorld } from './world';
 import { Customer } from './customer';
@@ -9,12 +9,16 @@ export type Phase = 'ready' | 'running' | 'over';
 
 export interface HudState {
   phase: Phase;
-  score: number;
+  score: number; // today's revenue (resets each day, drives the grade)
+  money: number; // wallet, persists across days, spent in the shop
+  day: number;
   combo: number;
   timeLeft: number;
   served: number;
   missed: number;
   holding: DishKey | null;
+  fever: boolean;
+  upgrades: Record<UpgradeKey, number>;
 }
 
 type StationState = 'idle' | 'cooking' | 'done';
@@ -79,6 +83,8 @@ class Station {
     this.group.add(this.model);
   }
 
+  cookMul = 1; // set by game from upgrades
+
   startCook(): void {
     this.state = 'cooking';
     this.timer = 0;
@@ -103,7 +109,7 @@ class Station {
   update(dt: number): void {
     if (this.state === 'cooking') {
       this.timer += dt;
-      if (this.timer >= this.dish.cookTime) this.finishCook();
+      if (this.timer >= this.dish.cookTime * this.cookMul) this.finishCook();
     }
     if (this.popT > 0) {
       this.popT -= dt;
@@ -136,6 +142,8 @@ export class OrderRushGame {
 
   private phase: Phase = 'ready';
   private score = 0;
+  private money = 0;
+  private day = 1;
   private combo = 0;
   private comboT = 0;
   private served = 0;
@@ -143,7 +151,10 @@ export class OrderRushGame {
   private timeLeft = GAME.dayLength;
   private spawnT = 1.2;
   private holding: Dish | null = null;
-  private clock = new THREE.Clock();
+  private fever = false;
+  private feverT = 0;
+  private upgrades: Record<UpgradeKey, number> = { speed: 0, interior: 0, menu: 0, combo: 0 };
+  private lastT = performance.now();
   private raf = 0;
   private ringEls = new Map<Station, HTMLDivElement>();
 
@@ -152,11 +163,11 @@ export class OrderRushGame {
     this.hudCb = hudCb;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const aspect = window.innerWidth / window.innerHeight;
-    const halfH = 5.2;
+    const halfH = Math.max(5.9, 5.2 * aspect) / aspect;
     this.camera = new THREE.OrthographicCamera(-halfH * aspect, halfH * aspect, halfH, -halfH, 0.1, 60);
     this.camera.position.set(0, 10.5, 8.4);
     this.camera.lookAt(0, 0.4, 0.8);
@@ -211,6 +222,7 @@ export class OrderRushGame {
 
   start(): void {
     if (this.phase !== 'ready' && this.phase !== 'over') return;
+    if (this.phase === 'over') this.day += 1;
     // reset
     for (const c of this.customers) this.removeCustomer(c, false);
     this.customers = [];
@@ -226,6 +238,13 @@ export class OrderRushGame {
     this.timeLeft = GAME.dayLength;
     this.spawnT = 0.6;
     this.holding = null;
+    this.fever = false;
+    this.feverT = 0;
+    for (const f of this.flyers) {
+      this.scene.remove(f.sprite);
+      f.sprite.material.dispose();
+    }
+    this.flyers = [];
     this.phase = 'running';
     this.pushHud();
     sfx.click();
@@ -234,6 +253,9 @@ export class OrderRushGame {
   dispose(): void {
     cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.onResize);
+    const cvs = this.renderer.domElement;
+    cvs.removeEventListener('pointerdown', this.onPointerDown);
+    cvs.removeEventListener('pointermove', this.onPointerMove);
     this.renderer.dispose();
   }
 
@@ -241,7 +263,7 @@ export class OrderRushGame {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const aspect = w / h;
-    const halfH = 5.2;
+    const halfH = Math.max(5.9, 5.2 * aspect) / aspect;
     this.camera.left = -halfH * aspect;
     this.camera.right = halfH * aspect;
     this.camera.top = halfH;
@@ -253,14 +275,37 @@ export class OrderRushGame {
 
   private spawnInterval(): number {
     const prog = 1 - this.timeLeft / GAME.dayLength;
-    return THREE.MathUtils.lerp(GAME.spawnStart, GAME.spawnMin, prog);
+    const dayMul = Math.max(0.6, 1 - GAME.daySpawnShrink * (this.day - 1));
+    return THREE.MathUtils.lerp(GAME.spawnStart, GAME.spawnMin, prog) * dayMul;
+  }
+
+  private priceMul(): number {
+    return 1 + 0.15 * this.upgrades.menu;
   }
 
   private spawnCustomer(): void {
-    const dish = DISHES[Math.floor(Math.random() * DISHES.length)];
     const prog = 1 - this.timeLeft / GAME.dayLength;
-    const patience = THREE.MathUtils.lerp(GAME.patienceStart, GAME.patienceMin, prog);
-    const c = new Customer(dish, patience);
+    const dayPatience = Math.max(0.55, 1 - GAME.dayPatienceShrink * (this.day - 1));
+    const interiorMul = 1 + 0.15 * this.upgrades.interior;
+    const vip = Math.random() < GAME.vipChance + 0.01 * (this.day - 1);
+    const patience =
+      THREE.MathUtils.lerp(GAME.patienceStart, GAME.patienceMin, prog) *
+      dayPatience *
+      interiorMul *
+      (vip ? GAME.vipPatienceMul : 1);
+    const doubleChance = Math.min(
+      0.6,
+      THREE.MathUtils.lerp(GAME.doubleChanceStart, GAME.doubleChanceMax, prog) +
+        GAME.dayDoubleBonus * (this.day - 1),
+    );
+    const double = Math.random() < doubleChance;
+    const orders: Dish[] = [];
+    for (let i = 0; i < (double ? 2 : 1); i++) {
+      let d = DISHES[Math.floor(Math.random() * DISHES.length)];
+      while (orders.some((o) => o.key === d.key)) d = DISHES[Math.floor(Math.random() * DISHES.length)];
+      orders.push(d);
+    }
+    const c = new Customer(orders, patience * (double ? 1.5 : 1), vip);
     c.group.position.set(GAME.doorPos.x, 0, GAME.doorPos.z);
     c.group.rotation.y = Math.PI; // face -z (into the room)
     this.scene.add(c.group);
@@ -351,24 +396,79 @@ export class OrderRushGame {
       sfx.click();
       return;
     }
-    if (c.dish.key !== this.holding.key) {
+    if (c.currentOrder.key !== this.holding.key) {
       sfx.denied();
       this.toast('다른 메뉴예요!', c.group.position);
       return;
     }
+    const dish = this.holding;
+    this.flyDish(dish, c);
     const frac = Math.max(0, c.patience / c.maxPatience);
-    const tip = Math.round(c.dish.price * 0.5 * frac);
+    const price = Math.round(dish.price * this.priceMul());
+    const tip = Math.round(price * 0.5 * frac * (c.vip ? GAME.vipTipMul : 1));
     this.combo += 1;
-    this.comboT = GAME.comboWindow;
-    const gain = c.dish.price + tip + this.combo * 500;
+    this.comboT = GAME.comboWindow + 1.5 * this.upgrades.combo;
+    if (!this.fever && this.combo >= GAME.feverCombo) {
+      this.fever = true;
+      this.feverT = GAME.feverTime;
+      sfx.fever();
+      this.popup('🔥 피버 타임!', c.group.position, '#ff9f6e');
+    }
+    const gain = (price + tip + this.combo * 500) * (this.fever ? GAME.feverMul : 1);
     this.score += gain;
+    this.money += gain;
     this.served += 1;
-    c.flashServed();
-    this.removeCustomer(c);
-    this.popup(`+${gain.toLocaleString()}원`, c.group.position, '#ffd166');
-    sfx.serve();
+    const hasMore = c.serveOne();
+    if (hasMore) {
+      this.popup(`+${gain.toLocaleString()}원`, c.group.position, '#ffd166');
+      this.toast('한 개 더 주문했어요!', c.group.position);
+    } else {
+      c.flashServed();
+      this.removeCustomer(c);
+      this.popup(`+${gain.toLocaleString()}원`, c.group.position, '#ffd166');
+    }
+    sfx.serve(this.combo);
     this.holding = null;
     this.pushHud();
+  }
+
+  private flyers: { sprite: THREE.Sprite; t: number; from: THREE.Vector3; to: THREE.Object3D }[] = [];
+
+  private flyDish(dish: Dish, c: Customer): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = 96;
+    canvas.height = 96;
+    const ctx = canvas.getContext('2d')!;
+    ctx.font = '64px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(dish.emoji, 48, 52);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+    sprite.scale.set(0.5, 0.5, 1);
+    const from = new THREE.Vector3(c.group.position.x, 1.15, GAME.counterZ - 0.75);
+    sprite.position.copy(from);
+    this.scene.add(sprite);
+    this.flyers.push({ sprite, t: 0, from, to: c.group });
+  }
+
+  private updateFlyers(dt: number): void {
+    for (const f of [...this.flyers]) {
+      f.t += dt / 0.45;
+      const t = Math.min(1, f.t);
+      const target = f.to.position.clone().setY(1.15);
+      f.sprite.position.lerpVectors(f.from, target, t);
+      f.sprite.position.y += Math.sin(t * Math.PI) * 1.4;
+      const s = 0.5 + Math.sin(t * Math.PI) * 0.15;
+      f.sprite.scale.set(s, s, 1);
+      if (f.t >= 1) {
+        this.scene.remove(f.sprite);
+        f.sprite.material.map?.dispose();
+        f.sprite.material.dispose();
+        this.flyers.splice(this.flyers.indexOf(f), 1);
+      }
+    }
   }
 
   private pick(): Station | null {
@@ -420,11 +520,15 @@ export class OrderRushGame {
     this.hudCb({
       phase: this.phase,
       score: this.score,
+      money: this.money,
+      day: this.day,
       combo: this.combo,
       timeLeft: Math.max(0, this.timeLeft),
       served: this.served,
       missed: this.missed,
       holding: this.holding?.key ?? null,
+      fever: this.fever,
+      upgrades: { ...this.upgrades },
     });
   }
 
@@ -432,7 +536,9 @@ export class OrderRushGame {
 
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop);
-    const dt = Math.min(this.clock.getDelta(), 0.1);
+    const now2 = performance.now();
+    const dt = Math.min((now2 - this.lastT) / 1000, 0.1);
+    this.lastT = now2;
 
     if (this.phase === 'running') {
       this.timeLeft -= dt;
@@ -454,7 +560,15 @@ export class OrderRushGame {
     }
 
     // stations
-    for (const st of this.stations) st.update(dt);
+    if (this.fever) {
+      this.feverT -= dt;
+      if (this.feverT <= 0) this.fever = false;
+    }
+    for (const st of this.stations) {
+      st.cookMul = Math.pow(0.85, this.upgrades.speed);
+      st.update(dt);
+    }
+    this.updateFlyers(dt);
 
     // customers
     for (const c of [...this.customers]) {
@@ -485,7 +599,7 @@ export class OrderRushGame {
       ring.style.left = `${sp.x}px`;
       ring.style.top = `${sp.y}px`;
       if (st.state === 'cooking') {
-        const frac = Math.min(1, st.timer / st.dish.cookTime);
+        const frac = Math.min(1, st.timer / (st.dish.cookTime * st.cookMul));
         ring.style.display = 'block';
         ring.style.background = `conic-gradient(#ffd166 ${frac * 360}deg, rgba(255,255,255,0.25) 0deg)`;
         ring.textContent = '';
@@ -507,4 +621,17 @@ export class OrderRushGame {
 
     this.renderer.render(this.scene, this.camera);
   };
+
+  buy(key: UpgradeKey): boolean {
+    const def = UPGRADES.find((u) => u.key === key)!;
+    const lv = this.upgrades[key];
+    if (lv >= def.costs.length) return false;
+    const cost = def.costs[lv];
+    if (this.money < cost) return false;
+    this.money -= cost;
+    this.upgrades[key] = lv + 1;
+    sfx.buy();
+    this.pushHud();
+    return true;
+  }
 }
