@@ -239,6 +239,9 @@ export class OrderRushGame {
   dispose(): void {
     cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.onResize);
+    const cvs = this.renderer.domElement;
+    cvs.removeEventListener('pointerdown', this.onPointerDown);
+    cvs.removeEventListener('pointermove', this.onPointerMove);
     this.renderer.dispose();
   }
 

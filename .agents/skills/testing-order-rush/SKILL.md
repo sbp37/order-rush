@@ -26,7 +26,28 @@ description: How to run and end-to-end test the 주문 폭주 식당 (Order Rush
   then read `window.__toasts` after each click.
 
 ## Expected strings
-- Start: "🍳 주문 폭주 식당", button "점심 러시 시작 (90초)", credits "3D 모델: kArchive · 출처: 쓰레드 dogfooter".
+- Start: "🍳 주문 폭주 식당", button "점심 러시 시작 (90초)", credits "3D 모델: kArchive · 출처: 쓰레드 dogfooter". Howto has a 5th line: "✌️ ×2 표시 손님은 메뉴 두 개를 주문해요 — 순서대로 두 번 서빙!".
 - HUD chips: "💰 N원", "⏱ N초", "😠 N", "들고 있음 <emoji> <name>", "🔥 콤보 ×N" (combo>1).
-- Game over: "🧾 오늘의 장사 마감", "🍽 서빙 N개", "😠 놓친 손님 N명", restart button is **"다시 영업하기"** (not "다시하기").
+- ×2 customers: bubble shows two emoji + purple "×2"; first serve must be orders[0] (left emoji); toast "한 개 더 주문했어요!"; patience refills +40% of max.
+- Game over: "🧾 오늘의 장사 마감", grade letter S(≥150k gold)/A(≥100k green)/B(≥60k blue)/C(purple), "🏆 최고기록 N원", "🎉 신기록!" when beaten, "🍽 서빙 N개", "😠 놓친 손님 N명", restart button is **"다시 영업하기"** (not "다시하기").
 - Score formula: price + round(price*0.5*patienceFrac) + combo*500.
+
+## Multiple Chrome windows hazard
+- More than one Chrome window may exist (different --user-data-dir). `wmctrl -l` lists them; the one on screen may not be the one CDP inspects. If DOM state contradicts the screenshot, close the stray (`wmctrl -i -c <id>`) and keep one window maximized.
+
+## Zombie listeners after HMR — IMPORTANT
+- `Game.dispose()` removes only the window resize listener — canvas pointerdown/pointermove survive. After Vite HMR remounts, every stale Game keeps handling clicks (saw quadruple "+N원" popups). **Do a full page reload after any code edit before trusting click behavior.**
+
+## Inspecting game state (temp hooks)
+- Adding `(window as any).__game = this;` in `init()` and inside `start()` lets you read `__game.customers` (`orders[]`, `patience`, `group.position`, `rotation.y`), `__game.stations` (`state`/`timer`), `__game.score`, `__game.timeLeft`. Useful: set `timeLeft=0.4` to end a round instantly; set `score` to check grade thresholds; set `c.patience` to force face moods; set `c.group.rotation.y=0` to reveal the face sprite (spawn rotation π = faces away from camera — verify whether that's still the case; if so faces are invisible in normal play). Always revert hooks before finishing.
+- `browser_console` multi-statement scripts return "undefined" but still execute — read results back with a single-expression call.
+
+## Flyer capture trick
+- The serve flyer (`{sprite,t,from,to}`, `t += dt/0.45`) is too fast to screenshot (~1s real). Pin it mid-arc via console before serving:
+  `var g=__game,orig=g.updateFlyers.bind(g);g.updateFlyers=function(dt){orig(dt);for(const f of this.flyers){if(f.t>0.5)f.t=0.5}}`
+  then `delete g.updateFlyers` to release.
+
+## Serve pitch / combo verification
+- Patch `OscillatorNode.prototype.detune` getter (or wrap `sfx.serve`) to log cents: serve tones run `min(combo,10)*100` cents (combo1=100, combo2=200) plus a 4th tone at 1568Hz when combo≥2. Combo window is 6 game-sec ≈ ~15-24 real-s under swiftshader — to trigger ×2 combo, stage TWO done stations then pickup+serve, pickup+serve back-to-back. Customer slides between counter slots when a slot frees — re-check positions right before clicking.
+- Narrow-window check: `wmctrl -i -r <win> -b remove,maximized_vert,maximized_horz` then `-e 0,x,y,400,740` (VM min-width lands ~532×740); scene should letterbox, not crop. Restore with `-b add,maximized_vert,maximized_horz`.
+- Record/record persists in React state per page load (`useState(()=>localStorage...)`); injected localStorage values are only read at mount — set them then hard-reload to test record paths.

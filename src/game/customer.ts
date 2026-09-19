@@ -47,7 +47,7 @@ export class Customer {
       new THREE.SpriteMaterial({ map: this.faceTex, transparent: true, depthWrite: false }),
     );
     this.face.scale.set(0.4, 0.4, 1);
-    this.face.position.set(0, 0.74, 0.3);
+    this.face.position.set(0, 0.74, -0.3);
     this.group.add(this.face);
     this.drawFace('happy', faceCanvas);
 
