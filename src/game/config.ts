@@ -103,4 +103,54 @@ export const GAME = {
   comboWindow: 6, // seconds to keep combo alive
   doubleChanceStart: 0.08, // chance a customer orders 2 dishes, ramps up with day progress
   doubleChanceMax: 0.35,
+  vipChance: 0.12, // +1%/day
+  vipPatienceMul: 0.6,
+  vipTipMul: 3,
+  feverCombo: 4, // combo needed to ignite fever
+  feverTime: 8,
+  feverMul: 2,
+  dayPatienceShrink: 0.06, // per-day patience multiplier decay (floor 55%)
+  daySpawnShrink: 0.07, // per-day spawn interval shrink (floor 60%)
+  dayDoubleBonus: 0.06, // extra 2-order chance per day
 };
+
+export type UpgradeKey = 'speed' | 'interior' | 'menu' | 'combo';
+
+export interface UpgradeDef {
+  key: UpgradeKey;
+  name: string;
+  emoji: string;
+  desc: string;
+  costs: number[];
+}
+
+export const UPGRADES: UpgradeDef[] = [
+  {
+    key: 'speed',
+    name: '화구 튜닝',
+    emoji: '🔥',
+    desc: '조리 시간 -15%/렙',
+    costs: [15000, 40000, 90000],
+  },
+  {
+    key: 'interior',
+    name: '인테리어',
+    emoji: '🛋️',
+    desc: '손님 인내심 +15%/렙',
+    costs: [12000, 35000, 80000],
+  },
+  {
+    key: 'menu',
+    name: '고급 메뉴판',
+    emoji: '📋',
+    desc: '메뉴 가격 +15%/렙',
+    costs: [20000, 50000, 110000],
+  },
+  {
+    key: 'combo',
+    name: '콤보 연습',
+    emoji: '⚡',
+    desc: '콤보 유지 시간 +1.5초/렙',
+    costs: [18000, 45000],
+  },
+];

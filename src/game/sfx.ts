@@ -76,6 +76,17 @@ export const sfx = {
     tone(150, 0.3, 'sawtooth', 0.06, 0.22);
   },
   denied: () => tone(180, 0.12, 'square', 0.08),
+  fever: () => {
+    tone(523, 0.08, 'sawtooth', 0.07);
+    tone(659, 0.08, 'sawtooth', 0.07, 0.06);
+    tone(784, 0.08, 'sawtooth', 0.07, 0.12);
+    tone(1046, 0.16, 'sawtooth', 0.07, 0.18);
+    sizzle(0.5, 0.05);
+  },
+  buy: () => {
+    tone(988, 0.09, 'sine', 0.1);
+    tone(1319, 0.14, 'sine', 0.1, 0.07);
+  },
   end: () => {
     tone(523, 0.15, 'triangle', 0.1);
     tone(659, 0.15, 'triangle', 0.1, 0.15);

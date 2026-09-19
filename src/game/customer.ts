@@ -12,6 +12,7 @@ export class Customer {
   group = new THREE.Group();
   bubble!: THREE.Sprite;
   orders: Dish[];
+  vip: boolean;
   patience: number;
   maxPatience: number;
   leaving = false;
@@ -26,13 +27,18 @@ export class Customer {
   private lastBarDraw = -1;
   private mood: Mood | null = null;
 
-  constructor(orders: Dish[], patience: number) {
+  constructor(orders: Dish[], patience: number, vip = false) {
     this.orders = orders;
+    this.vip = vip;
     this.patience = patience;
     this.maxPatience = patience;
 
-    const color = BODY_COLORS[this.id % BODY_COLORS.length];
-    this.bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
+    const color = vip ? 0xf6c945 : BODY_COLORS[this.id % BODY_COLORS.length];
+    this.bodyMat = new THREE.MeshStandardMaterial({
+      color,
+      roughness: vip ? 0.35 : 0.6,
+      metalness: vip ? 0.4 : 0,
+    });
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.42, 6, 14), this.bodyMat);
     body.position.y = 0.55;
     body.castShadow = true;
