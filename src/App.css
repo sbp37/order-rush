@@ -186,3 +186,53 @@
   font-size: 12px;
   margin: 0;
 }
+
+.grade {
+  font-size: clamp(72px, 14vw, 120px);
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  animation: grade-pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+@keyframes grade-pop {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.new-record {
+  color: #ffd166;
+  font-size: 20px;
+  font-weight: 800;
+  animation: popup-float 1.4s ease-out;
+}
+
+.result-row.best {
+  color: #9bf6c9;
+}
+
+@media (max-width: 640px) {
+  .hud {
+    top: 8px;
+    gap: 6px;
+    width: 96vw;
+  }
+  .hud-chip {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  .screen {
+    gap: 12px;
+    padding: 16px;
+  }
+  .btn {
+    padding: 16px 36px;
+    min-height: 48px;
+  }
+}

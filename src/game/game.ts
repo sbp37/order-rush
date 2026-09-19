@@ -143,7 +143,7 @@ export class OrderRushGame {
   private timeLeft = GAME.dayLength;
   private spawnT = 1.2;
   private holding: Dish | null = null;
-  private clock = new THREE.Clock();
+  private lastT = performance.now();
   private raf = 0;
   private ringEls = new Map<Station, HTMLDivElement>();
 
@@ -152,11 +152,11 @@ export class OrderRushGame {
     this.hudCb = hudCb;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const aspect = window.innerWidth / window.innerHeight;
-    const halfH = 5.2;
+    const halfH = Math.max(5.9, 5.2 * aspect) / aspect;
     this.camera = new THREE.OrthographicCamera(-halfH * aspect, halfH * aspect, halfH, -halfH, 0.1, 60);
     this.camera.position.set(0, 10.5, 8.4);
     this.camera.lookAt(0, 0.4, 0.8);
@@ -226,6 +226,11 @@ export class OrderRushGame {
     this.timeLeft = GAME.dayLength;
     this.spawnT = 0.6;
     this.holding = null;
+    for (const f of this.flyers) {
+      this.scene.remove(f.sprite);
+      f.sprite.material.dispose();
+    }
+    this.flyers = [];
     this.phase = 'running';
     this.pushHud();
     sfx.click();
@@ -241,7 +246,7 @@ export class OrderRushGame {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const aspect = w / h;
-    const halfH = 5.2;
+    const halfH = Math.max(5.9, 5.2 * aspect) / aspect;
     this.camera.left = -halfH * aspect;
     this.camera.right = halfH * aspect;
     this.camera.top = halfH;
@@ -257,10 +262,16 @@ export class OrderRushGame {
   }
 
   private spawnCustomer(): void {
-    const dish = DISHES[Math.floor(Math.random() * DISHES.length)];
     const prog = 1 - this.timeLeft / GAME.dayLength;
     const patience = THREE.MathUtils.lerp(GAME.patienceStart, GAME.patienceMin, prog);
-    const c = new Customer(dish, patience);
+    const double = Math.random() < THREE.MathUtils.lerp(GAME.doubleChanceStart, GAME.doubleChanceMax, prog);
+    const orders: Dish[] = [];
+    for (let i = 0; i < (double ? 2 : 1); i++) {
+      let d = DISHES[Math.floor(Math.random() * DISHES.length)];
+      while (orders.some((o) => o.key === d.key)) d = DISHES[Math.floor(Math.random() * DISHES.length)];
+      orders.push(d);
+    }
+    const c = new Customer(orders, patience * (double ? 1.5 : 1));
     c.group.position.set(GAME.doorPos.x, 0, GAME.doorPos.z);
     c.group.rotation.y = Math.PI; // face -z (into the room)
     this.scene.add(c.group);
@@ -351,24 +362,71 @@ export class OrderRushGame {
       sfx.click();
       return;
     }
-    if (c.dish.key !== this.holding.key) {
+    if (c.currentOrder.key !== this.holding.key) {
       sfx.denied();
       this.toast('다른 메뉴예요!', c.group.position);
       return;
     }
+    const dish = this.holding;
+    this.flyDish(dish, c);
     const frac = Math.max(0, c.patience / c.maxPatience);
-    const tip = Math.round(c.dish.price * 0.5 * frac);
+    const tip = Math.round(dish.price * 0.5 * frac);
     this.combo += 1;
     this.comboT = GAME.comboWindow;
-    const gain = c.dish.price + tip + this.combo * 500;
+    const gain = dish.price + tip + this.combo * 500;
     this.score += gain;
     this.served += 1;
-    c.flashServed();
-    this.removeCustomer(c);
-    this.popup(`+${gain.toLocaleString()}원`, c.group.position, '#ffd166');
-    sfx.serve();
+    const hasMore = c.serveOne();
+    if (hasMore) {
+      this.popup(`+${gain.toLocaleString()}원`, c.group.position, '#ffd166');
+      this.toast('한 개 더 주문했어요!', c.group.position);
+    } else {
+      c.flashServed();
+      this.removeCustomer(c);
+      this.popup(`+${gain.toLocaleString()}원`, c.group.position, '#ffd166');
+    }
+    sfx.serve(this.combo);
     this.holding = null;
     this.pushHud();
+  }
+
+  private flyers: { sprite: THREE.Sprite; t: number; from: THREE.Vector3; to: THREE.Object3D }[] = [];
+
+  private flyDish(dish: Dish, c: Customer): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = 96;
+    canvas.height = 96;
+    const ctx = canvas.getContext('2d')!;
+    ctx.font = '64px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(dish.emoji, 48, 52);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+    sprite.scale.set(0.5, 0.5, 1);
+    const from = new THREE.Vector3(c.group.position.x, 1.15, GAME.counterZ - 0.75);
+    sprite.position.copy(from);
+    this.scene.add(sprite);
+    this.flyers.push({ sprite, t: 0, from, to: c.group });
+  }
+
+  private updateFlyers(dt: number): void {
+    for (const f of [...this.flyers]) {
+      f.t += dt / 0.45;
+      const t = Math.min(1, f.t);
+      const target = f.to.position.clone().setY(1.15);
+      f.sprite.position.lerpVectors(f.from, target, t);
+      f.sprite.position.y += Math.sin(t * Math.PI) * 1.4;
+      const s = 0.5 + Math.sin(t * Math.PI) * 0.15;
+      f.sprite.scale.set(s, s, 1);
+      if (f.t >= 1) {
+        this.scene.remove(f.sprite);
+        f.sprite.material.map?.dispose();
+        f.sprite.material.dispose();
+        this.flyers.splice(this.flyers.indexOf(f), 1);
+      }
+    }
   }
 
   private pick(): Station | null {
@@ -432,7 +490,9 @@ export class OrderRushGame {
 
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop);
-    const dt = Math.min(this.clock.getDelta(), 0.1);
+    const now2 = performance.now();
+    const dt = Math.min((now2 - this.lastT) / 1000, 0.1);
+    this.lastT = now2;
 
     if (this.phase === 'running') {
       this.timeLeft -= dt;
@@ -455,6 +515,7 @@ export class OrderRushGame {
 
     // stations
     for (const st of this.stations) st.update(dt);
+    this.updateFlyers(dt);
 
     // customers
     for (const c of [...this.customers]) {

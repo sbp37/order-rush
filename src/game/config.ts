@@ -101,4 +101,6 @@ export const GAME = {
   spawnStart: 3.4, // seconds between arrivals at day start
   spawnMin: 1.5,
   comboWindow: 6, // seconds to keep combo alive
+  doubleChanceStart: 0.08, // chance a customer orders 2 dishes, ramps up with day progress
+  doubleChanceMax: 0.35,
 };
